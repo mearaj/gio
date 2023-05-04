@@ -546,6 +546,12 @@ func gio_onMouse(view, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x, y, dx, 
 	default:
 		panic("invalid direction")
 	}
+	kMods := convertMods(mods)
+	scroll := f32.Point{X: dxf, Y: dyf}
+	// support horizontal scroll (shift key pressed + mousewheel scroll)
+	if kMods == key.ModShift {
+		scroll = f32.Point{X: dyf, Y: dxf}
+	}
 	w.w.Event(pointer.Event{
 		Type:      typ,
 		Source:    pointer.Mouse,
