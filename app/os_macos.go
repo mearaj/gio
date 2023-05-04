@@ -558,8 +558,8 @@ func gio_onMouse(view, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x, y, dx, 
 		Time:      t,
 		Buttons:   w.pointerBtns,
 		Position:  pos,
-		Scroll:    f32.Point{X: dxf, Y: dyf},
-		Modifiers: convertMods(mods),
+		Scroll:    scroll,
+		Modifiers: kMods,
 	})
 }
 
