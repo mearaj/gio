@@ -232,10 +232,6 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 
 	w := win.(*window)
 
-	if msg == windows.GIO_DEEPLINKING {
-		fmt.Println("GIO_DEEPLINK", msg, wParam, lParam)
-	}
-
 	switch msg {
 	case windows.WM_UNICHAR:
 		if wParam == windows.UNICODE_NOCHAR {
@@ -887,8 +883,6 @@ func (w *window) raise() {
 }
 
 func (w *window) processDeeplink(uri string) {
-	fmt.Println("processDeeplink", uri)
-
 	u, err := url.Parse(uri)
 	if err != nil {
 		return
