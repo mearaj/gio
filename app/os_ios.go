@@ -71,7 +71,9 @@ static struct drawParams viewDrawParams(CFTypeRef viewRef) {
 import "C"
 
 import (
+	"gioui.org/io/deeplink"
 	"image"
+	"net/url"
 	"runtime"
 	"runtime/debug"
 	"time"
@@ -131,6 +133,9 @@ func onCreate(view, controller C.CFTypeRef) {
 	w.Configure(wopts.options)
 	w.w.Event(system.StageEvent{Stage: system.StagePaused})
 	w.w.Event(ViewEvent{ViewController: uintptr(controller)})
+	if startupDeeplink != nil {
+		w.w.Event(deeplink.Event{URL: startupDeeplink})
+	}
 }
 
 //export gio_onDraw
@@ -349,6 +354,23 @@ func newWindow(win *callbacks, options []Option) error {
 }
 
 func osMain() {
+}
+
+var startupDeeplink *url.URL
+
+//export gio_onDeeplink
+func gio_onDeeplink(uri C.CFTypeRef) {
+	u, err := url.Parse(nsstringToString(uri))
+	if err != nil {
+		return
+	}
+	if len(views) == 0 {
+		startupDeeplink = u
+		return
+	}
+	for _, w := range views {
+		w.w.Event(deeplink.Event{URL: u})
+	}
 }
 
 //export gio_runMain

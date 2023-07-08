@@ -3,9 +3,18 @@
 package app
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"gioui.org/io/deeplink"
+	syscall "golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 	"image"
+	"io"
+	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -15,11 +24,8 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	syscall "golang.org/x/sys/windows"
-
 	"gioui.org/app/internal/windows"
 	"gioui.org/unit"
-	gowindows "golang.org/x/sys/windows"
 
 	"gioui.org/f32"
 	"gioui.org/io/clipboard"
@@ -109,6 +115,9 @@ func newWindow(window *callbacks, options []Option) error {
 		w.w = window
 		w.w.SetDriver(w)
 		w.w.Event(ViewEvent{HWND: uintptr(w.hwnd)})
+		if startupDeeplink != "" {
+			w.processDeeplink(startupDeeplink)
+		}
 		w.Configure(options)
 		windows.SetForegroundWindow(w.hwnd)
 		windows.SetFocus(w.hwnd)
@@ -222,6 +231,10 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 	}
 
 	w := win.(*window)
+
+	if msg == windows.GIO_DEEPLINKING {
+		fmt.Println("GIO_DEEPLINK", msg, wParam, lParam)
+	}
 
 	switch msg {
 	case windows.WM_UNICHAR:
@@ -418,6 +431,29 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 	case windows.WM_IME_ENDCOMPOSITION:
 		w.w.SetComposingRegion(key.Range{Start: -1, End: -1})
 		return windows.TRUE
+	case windows.GIO_DEEPLINKING:
+		if schemesDeeplink == "" {
+			return windows.DefWindowProc(hwnd, msg, wParam, lParam)
+		}
+
+		size := wParam
+		if size >= 1<<16-1 {
+			return windows.TRUE
+		}
+
+		id := hex.EncodeToString(((*[unsafe.Sizeof(int(0))]byte)(unsafe.Pointer(&lParam)))[:])
+		f, err := os.Open(filepath.Join(os.TempDir(), "gio_deeplinking-"+string(id)))
+		if err != nil {
+			return windows.TRUE
+		}
+		defer f.Close()
+
+		b := make([]byte, size)
+		if _, err := io.ReadFull(f, b); err != nil {
+			return windows.TRUE
+		}
+
+		w.processDeeplink(string(b))
 	}
 
 	return windows.DefWindowProc(hwnd, msg, wParam, lParam)
@@ -652,7 +688,7 @@ func (w *window) readClipboard() error {
 		return err
 	}
 	defer windows.GlobalUnlock(mem)
-	content := gowindows.UTF16PtrToString((*uint16)(unsafe.Pointer(ptr)))
+	content := syscall.UTF16PtrToString((*uint16)(unsafe.Pointer(ptr)))
 	w.w.Event(clipboard.Event{Text: content})
 	return nil
 }
@@ -733,7 +769,7 @@ func (w *window) writeClipboard(s string) error {
 	if err := windows.EmptyClipboard(); err != nil {
 		return err
 	}
-	u16, err := gowindows.UTF16FromString(s)
+	u16, err := syscall.UTF16FromString(s)
 	if err != nil {
 		return err
 	}
@@ -850,6 +886,29 @@ func (w *window) raise() {
 		windows.SWP_NOMOVE|windows.SWP_NOSIZE|windows.SWP_SHOWWINDOW)
 }
 
+func (w *window) processDeeplink(uri string) {
+	fmt.Println("processDeeplink", uri)
+
+	u, err := url.Parse(uri)
+	if err != nil {
+		return
+	}
+
+	found := false
+	for _, scheme := range schemesDeeplinkList {
+		if u.Scheme == scheme {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return
+	}
+
+	w.w.Event(deeplink.Event{URL: u})
+}
+
 func convertKeyCode(code uintptr) (string, bool) {
 	if '0' <= code && code <= '9' || 'A' <= code && code <= 'Z' {
 		return string(rune(code)), true
@@ -952,6 +1011,134 @@ func configForDPI(dpi int) unit.Metric {
 		PxPerDp: ppdp,
 		PxPerSp: ppdp,
 	}
+}
+
+// schemesDeeplink is a list of schemes, comma separated, that most be
+// defined using -X compiler ldflag.
+var schemesDeeplink string
+var schemesDeeplinkList []string
+var startupDeeplink string
+
+func init() {
+	if schemesDeeplink == "" {
+		return
+	}
+	schemesDeeplinkList = strings.Split(schemesDeeplink, ",")
+
+	number, err := windows.RegisterWindowMessage(schemesDeeplink)
+	if err != nil {
+		return
+	}
+	windows.GIO_DEEPLINKING = number
+
+	/*
+		On Windows, launching the app using a deeplink will start a new instance of the app,
+		a new window. That behavior doesn't align with iOS/Android/macOS, where the deeplink
+		sends the event to the running app (if any).
+
+		In order to align the behavior, we use a global mutex to check if the app is already
+		running. If it is, we send the deeplink to the running app and exit the new instance.
+
+		That should happen on init to prevent the user from seeing the new window.
+	*/
+	if ok := processDeeplink(); ok {
+		os.Exit(0)
+		return
+	}
+
+	for _, scheme := range schemesDeeplinkList {
+		go registerDeeplink(scheme)
+	}
+}
+
+func registerDeeplink(scheme string) error {
+	path, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	key, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\\Classes\\`+scheme, registry.ALL_ACCESS)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+
+	if err = key.SetStringValue("", "URL:"+scheme+" Protocol"); err != nil {
+		return err
+	}
+
+	if err = key.SetStringValue("URL Protocol", ""); err != nil {
+		return err
+	}
+
+	icon, _, err := registry.CreateKey(key, `DefaultIcon`, registry.ALL_ACCESS)
+	if err != nil {
+		return err
+	}
+	defer icon.Close()
+
+	if err = icon.SetStringValue("", `"`+path+`",1`); err != nil {
+		return err
+	}
+
+	cmd, _, err := registry.CreateKey(key, `shell\\open\\command`, registry.ALL_ACCESS)
+	if err != nil {
+		return err
+	}
+	defer cmd.Close()
+
+	// The app will launch with `-gio_deeplinking` as the first argument, and the deeplink as the second.
+	if err = cmd.SetStringValue("", `"`+path+`" -gio_deeplinking "%1"`); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func processDeeplink() (finishProcess bool) {
+	_, alreadyExists, err := windows.CreateMutex(schemesDeeplink)
+	if err != nil {
+		return false
+	}
+
+	if len(os.Args) < 3 || os.Args[1] != "-gio_deeplinking" {
+		// Only one instance of the app can run at a time.
+		// If the current instance doesn't have any deeplink to process, then
+		// it will exit if another instance is already running, or it will
+		// continue if it is the first instance.
+		return alreadyExists
+	}
+
+	u := os.Args[2]
+
+	if !alreadyExists {
+		// The mutex was created by this process, and we are the first instance.
+		startupDeeplink = u
+		return alreadyExists
+	}
+
+	id := make([]byte, unsafe.Sizeof(int(0)))
+	rand.Read(id)
+
+	// First, I tried to use mmap, but that plagues everything with unsafe pointers, and it's not worth it.
+	f, err := os.Create(filepath.Join(os.TempDir(), "gio_deeplinking-"+hex.EncodeToString(id)))
+	if err != nil {
+		return alreadyExists
+	}
+
+	if _, err := f.Write([]byte(u)); err != nil {
+		return alreadyExists
+	}
+
+	if err := f.Close(); err != nil {
+		return alreadyExists
+	}
+
+	if err := windows.SendMessage(windows.HWND_BROADCAST, windows.GIO_DEEPLINKING, uintptr(len(u)), *(*uintptr)(unsafe.Pointer(&id[0]))); err != nil {
+		return alreadyExists
+	}
+
+	return alreadyExists
 }
 
 func (_ ViewEvent) ImplementsEvent() {}

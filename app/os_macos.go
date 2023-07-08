@@ -7,7 +7,9 @@ package app
 
 import (
 	"errors"
+	"gioui.org/io/deeplink"
 	"image"
+	"net/url"
 	"runtime"
 	"time"
 	"unicode"
@@ -842,6 +844,23 @@ func gio_onFinishLaunching() {
 	close(launched)
 }
 
+var startupDeeplink *url.URL
+
+//export gio_onDeeplink
+func gio_onDeeplink(uri C.CFTypeRef) {
+	u, err := url.Parse(nsstringToString(uri))
+	if err != nil {
+		return
+	}
+	if len(viewMap) == 0 {
+		startupDeeplink = u
+		return
+	}
+	for _, w := range viewMap {
+		w.w.Event(deeplink.Event{URL: u})
+	}
+}
+
 func newWindow(win *callbacks, options []Option) error {
 	<-launched
 	errch := make(chan error)
@@ -867,6 +886,9 @@ func newWindow(win *callbacks, options []Option) error {
 		C.makeKeyAndOrderFront(window)
 		layer := C.layerForView(w.view)
 		w.w.Event(ViewEvent{View: uintptr(w.view), Layer: uintptr(layer)})
+		if startupDeeplink != nil {
+			w.w.Event(deeplink.Event{URL: startupDeeplink})
+		}
 	})
 	return <-errch
 }

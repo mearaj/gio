@@ -121,9 +121,11 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"gioui.org/io/deeplink"
 	"image"
 	"image/color"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -657,6 +659,16 @@ func Java_org_gioui_GioView_onClearA11yFocus(env *C.JNIEnv, class C.jclass, view
 	if w.semantic.focusID == w.semIDFor(virtID) {
 		w.semantic.focusID = 0
 	}
+}
+
+//export Java_org_gioui_GioView_onDeeplink
+func Java_org_gioui_GioView_onDeeplink(env *C.JNIEnv, class C.jclass, view C.jlong, uri C.jstring) {
+	w := cgo.Handle(view).Value().(*window)
+	u, err := url.Parse(goString(env, uri))
+	if err != nil {
+		return
+	}
+	w.callbacks.Event(deeplink.Event{URL: u})
 }
 
 func (w *window) initAccessibilityNodeInfo(env *C.JNIEnv, sem router.SemanticNode, off image.Point, info C.jobject) error {
