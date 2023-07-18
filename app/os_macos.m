@@ -387,7 +387,7 @@ CFTypeRef gio_createView(void) {
 }
 - (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls {
 	for (NSURL *url in urls) {
-		gio_onDeeplink((__bridge CFTypeRef)url.absoluteString);
+		gio_onOpenURI((__bridge CFTypeRef)url.absoluteString);
 	}
 }
 @end

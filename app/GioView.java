@@ -317,7 +317,7 @@ public final class GioView extends SurfaceView implements Choreographer.FrameCal
 			return;
 		}
 		if (intent.getData() != null) {
-			this.onDeeplink(nhandle, intent.getData().toString());
+			this.onOpenURI(nhandle, intent.getData().toString());
 		}
 	}
 
@@ -559,7 +559,7 @@ public final class GioView extends SurfaceView implements Choreographer.FrameCal
 	static private native void onExitTouchExploration(long handle);
 	static private native void onA11yFocus(long handle, int viewId);
 	static private native void onClearA11yFocus(long handle, int viewId);
-	static private native void onDeeplink(long handle, String uri);
+	static private native void onOpenURI(long handle, String uri);
 	static private native void imeSetSnippet(long handle, int start, int end);
 	static private native String imeSnippet(long handle);
 	static private native int imeSnippetStart(long handle);

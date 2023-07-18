@@ -661,8 +661,8 @@ func Java_org_gioui_GioView_onClearA11yFocus(env *C.JNIEnv, class C.jclass, view
 	}
 }
 
-//export Java_org_gioui_GioView_onDeeplink
-func Java_org_gioui_GioView_onDeeplink(env *C.JNIEnv, class C.jclass, view C.jlong, uri C.jstring) {
+//export Java_org_gioui_GioView_onOpenURI
+func Java_org_gioui_GioView_onOpenURI(env *C.JNIEnv, class C.jclass, view C.jlong, uri C.jstring) {
 	w := cgo.Handle(view).Value().(*window)
 	u, err := url.Parse(goString(env, uri))
 	if err != nil {

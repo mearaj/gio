@@ -3,5 +3,5 @@
 #include <UIKit/UIKit.h>
 
 @interface GioViewController : UIViewController
-- (BOOL)onDeeplink:(NSString *)url;
+- (BOOL)onOpenURI:(NSString *)url;
 @end

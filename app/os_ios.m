@@ -100,8 +100,8 @@ CGFloat _keyboardHeight;
 	[self.view setNeedsLayout];
 }
 
-- (BOOL)onDeeplink:(NSString *)url {
-    gio_onDeeplink((__bridge CFTypeRef)url);
+- (BOOL)onOpenURI:(NSString *)url {
+    gio_onOpenURI((__bridge CFTypeRef)url);
     return YES;
 }
 @end

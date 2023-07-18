@@ -846,8 +846,8 @@ func gio_onFinishLaunching() {
 
 var startupDeeplink *url.URL
 
-//export gio_onDeeplink
-func gio_onDeeplink(uri C.CFTypeRef) {
+//export gio_onOpenURI
+func gio_onOpenURI(uri C.CFTypeRef) {
 	u, err := url.Parse(nsstringToString(uri))
 	if err != nil {
 		return
