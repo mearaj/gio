@@ -313,13 +313,13 @@ public final class GioView extends SurfaceView implements Choreographer.FrameCal
 	}
 
 	protected void onIntentEvent(Intent intent) {
-        if (intent == null) {
-            return;
-        }
-        if (intent.getData() != null) {
-            this.onDeeplink(nhandle, intent.getData().toString());
-        }
-    }
+		if (intent == null) {
+			return;
+		}
+		if (intent.getData() != null) {
+			this.onDeeplink(nhandle, intent.getData().toString());
+		}
+	}
 
 	@Override protected boolean dispatchHoverEvent(MotionEvent event) {
 		if (!accessManager.isTouchExplorationEnabled()) {

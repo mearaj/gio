@@ -65,6 +65,6 @@ public final class GioActivity extends Activity {
 
 	@Override protected void onNewIntent(Intent intent) {
 		super.onNewIntent(intent);
-        view.onIntentEvent(intent);
+		view.onIntentEvent(intent);
 	}
 }
