@@ -116,7 +116,7 @@ func newWindow(window *callbacks, options []Option) error {
 		w.w.SetDriver(w)
 		w.w.Event(ViewEvent{HWND: uintptr(w.hwnd)})
 		if startupDeeplink != "" {
-			w.processDeeplink(startupDeeplink)
+			w.onOpenURI(startupDeeplink)
 		}
 		w.Configure(options)
 		windows.SetForegroundWindow(w.hwnd)
@@ -449,7 +449,7 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 			return windows.TRUE
 		}
 
-		w.processDeeplink(string(b))
+		w.onOpenURI(string(b))
 	}
 
 	return windows.DefWindowProc(hwnd, msg, wParam, lParam)
@@ -882,7 +882,7 @@ func (w *window) raise() {
 		windows.SWP_NOMOVE|windows.SWP_NOSIZE|windows.SWP_SHOWWINDOW)
 }
 
-func (w *window) processDeeplink(uri string) {
+func (w *window) onOpenURI(uri string) {
 	u, err := url.Parse(uri)
 	if err != nil {
 		return
@@ -1011,6 +1011,8 @@ func configForDPI(dpi int) unit.Metric {
 // defined using -X compiler ldflag.
 var schemesDeeplink string
 var schemesDeeplinkList []string
+
+// startupDeeplink is the deeplink that started the app, if any.
 var startupDeeplink string
 
 func init() {
@@ -1019,11 +1021,11 @@ func init() {
 	}
 	schemesDeeplinkList = strings.Split(schemesDeeplink, ",")
 
-	number, err := windows.RegisterWindowMessage(schemesDeeplink)
+	code, err := windows.RegisterWindowMessage(schemesDeeplink)
 	if err != nil {
 		return
 	}
-	windows.GIO_DEEPLINKING = number
+	windows.GIO_DEEPLINKING = code
 
 	/*
 		On Windows, launching the app using a deeplink will start a new instance of the app,
@@ -1035,17 +1037,17 @@ func init() {
 
 		That should happen on init to prevent the user from seeing the new window.
 	*/
-	if ok := processDeeplink(); ok {
+	if ok := processOpenURI(); ok {
 		os.Exit(0)
 		return
 	}
 
 	for _, scheme := range schemesDeeplinkList {
-		go registerDeeplink(scheme)
+		go registerScheme(scheme)
 	}
 }
 
-func registerDeeplink(scheme string) error {
+func registerScheme(scheme string) error {
 	path, err := os.Executable()
 	if err != nil {
 		return err
@@ -1089,7 +1091,7 @@ func registerDeeplink(scheme string) error {
 	return nil
 }
 
-func processDeeplink() (finishProcess bool) {
+func processOpenURI() (finishProcess bool) {
 	_, alreadyExists, err := windows.CreateMutex(schemesDeeplink)
 	if err != nil {
 		return false
