@@ -1007,7 +1007,7 @@ func configForDPI(dpi int) unit.Metric {
 	}
 }
 
-// schemesDeeplink is a list of schemes, comma separated, that most be
+// schemesDeeplink is a list of schemes, comma separated, that must be
 // defined using -X compiler ldflag.
 var schemesDeeplink string
 var schemesDeeplinkList []string
