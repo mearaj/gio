@@ -7,6 +7,8 @@ package windows
 
 import (
 	"fmt"
+	"golang.org/x/sys/windows/registry"
+	"os"
 	"runtime"
 	"time"
 	"unicode/utf16"
@@ -307,7 +309,10 @@ const (
 	LR_SHARED           = 0x00008000
 	LR_VGACOLOR         = 0x00000080
 
-	FILE_MAP_READ = 0x0004
+	FILE_MAP_WRITE = 0x0002
+	FILE_MAP_READ  = 0x0004
+
+	PAGE_READWRITE = 0x00000004
 )
 
 var (
@@ -323,8 +328,10 @@ var (
 	_GlobalFree       = kernel32.NewProc("GlobalFree")
 	_GlobalLock       = kernel32.NewProc("GlobalLock")
 	_GlobalUnlock     = kernel32.NewProc("GlobalUnlock")
-	_OpenFileMapping  = kernel32.NewProc("OpenFileMappingA")
+	_MapViewOfFile    = kernel32.NewProc("MapViewOfFile")
+	_OpenFileMapping  = kernel32.NewProc("OpenFileMappingW")
 	_ReleaseMutex     = kernel32.NewProc("ReleaseMutex")
+	_UnmapViewOfFile  = kernel32.NewProc("UnmapViewOfFile")
 
 	user32                       = syscall.NewLazySystemDLL("user32.dll")
 	_AdjustWindowRectEx          = user32.NewProc("AdjustWindowRectEx")
@@ -666,16 +673,13 @@ func GlobalUnlock(h syscall.Handle) {
 	_GlobalUnlock.Call(uintptr(h))
 }
 
-func CreateMutex(name string) (ptr syscall.Handle, alreadyExists bool, err error) {
+func CreateMutex(name string) (ptr syscall.Handle, err error) {
 	r, _, err := _CreateMutex.Call(0, 0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(name))))
 	switch err.(syscall.Errno) {
-	case 0:
-		return syscall.Handle(r), false, nil
 	case ERROR_ALREADY_EXISTS:
-		return syscall.Handle(r), true, nil
-	default:
-		return 0, false, fmt.Errorf("CreateMutex: %v", err)
+		return 0, err
 	}
+	return syscall.Handle(r), nil
 }
 
 func GetMutexInfo(h syscall.Handle) (pid, count uint32, err error) {
@@ -686,12 +690,38 @@ func GetMutexInfo(h syscall.Handle) (pid, count uint32, err error) {
 	return pid, count, nil
 }
 
-func OpenFileMapping(name string) (ptr syscall.Handle, err error) {
-	r, _, err := _OpenFileMapping.Call(FILE_MAP_READ, 0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(name))))
+func CreateFileMapping(mode uint32, name string, size int) (ptr syscall.Handle, err error) {
+	return syscall.CreateFileMapping(syscall.InvalidHandle, nil, mode, 0, uint32(size), syscall.StringToUTF16Ptr("Local"+name))
+}
+
+func OpenFileMapping(mode int32, name string) (syscall.Handle, error) {
+	r, _, err := _OpenFileMapping.Call(uintptr(mode), 0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("Local"+name))))
 	if r == 0 {
 		return 0, fmt.Errorf("OpenFileMapping: %v", err)
 	}
 	return syscall.Handle(r), nil
+}
+
+func CloseFileMapping(h syscall.Handle) error {
+	return syscall.Close(h)
+}
+
+func MapViewOfFile(h syscall.Handle, mode int32, size int) ([]byte, error) {
+	r, _, err := _MapViewOfFile.Call(uintptr(h), uintptr(mode), 0, 0, uintptr(size))
+	if r == 0 {
+		return nil, fmt.Errorf("MapViewOfFile: %v", err)
+	}
+
+	slice := [3]uintptr{r, uintptr(size), uintptr(size)}
+	return *(*[]byte)(unsafe.Pointer(&slice)), nil
+}
+
+func UnmapViewOfFile(b []byte) error {
+	r, _, err := _UnmapViewOfFile.Call(uintptr(unsafe.Pointer(&b[0])))
+	if r == 0 {
+		return fmt.Errorf("UnmapViewOfFile: %v", err)
+	}
+	return nil
 }
 
 func ReleaseMutex(h uintptr) error {
@@ -880,4 +910,43 @@ func (p *WindowPlacement) Set(Left, Top, Right, Bottom int) {
 	p.rcNormalPosition.Top = int32(Top)
 	p.rcNormalPosition.Right = int32(Right)
 	p.rcNormalPosition.Bottom = int32(Bottom)
+}
+
+func RegisterScheme(scheme string) error {
+	path, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	key, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\\Classes\\`+scheme, registry.ALL_ACCESS)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+
+	if err = key.SetStringValue("", "URL:"+scheme+" Protocol"); err != nil {
+		return err
+	}
+
+	if err = key.SetStringValue("URL Protocol", ""); err != nil {
+		return err
+	}
+
+	icon, _, err := registry.CreateKey(key, `DefaultIcon`, registry.ALL_ACCESS)
+	if err != nil {
+		return err
+	}
+	defer icon.Close()
+
+	if err = icon.SetStringValue("", `"`+path+`",1`); err != nil {
+		return err
+	}
+
+	cmd, _, err := registry.CreateKey(key, `shell\\open\\command`, registry.ALL_ACCESS)
+	if err != nil {
+		return err
+	}
+	defer cmd.Close()
+
+	return cmd.SetStringValue("", `"`+path+`" "%1"`)
 }
