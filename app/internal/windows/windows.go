@@ -316,7 +316,7 @@ const (
 )
 
 var (
-	GIO_DEEPLINKING uint32 // Custom message for deep linking, lazy init
+	GIO_OPEN_URL uint32 // Custom message for deep linking, lazy init
 )
 
 var (

@@ -422,7 +422,7 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 	case windows.WM_IME_ENDCOMPOSITION:
 		w.w.SetComposingRegion(key.Range{Start: -1, End: -1})
 		return windows.TRUE
-	case windows.GIO_DEEPLINKING:
+	case windows.GIO_OPEN_URL:
 		if schemesURI == "" {
 			return windows.DefWindowProc(hwnd, msg, wParam, lParam)
 		}
@@ -1010,7 +1010,7 @@ func init() {
 	if err != nil {
 		return
 	}
-	windows.GIO_DEEPLINKING = code
+	windows.GIO_OPEN_URL = code
 
 	/*
 		On Windows, launching the app using a URI will start a new instance of the app,
@@ -1075,7 +1075,7 @@ func broadcastURI(uri string) {
 
 	copy(dst, uri)
 	windows.UnmapViewOfFile(dst)
-	windows.SendMessage(windows.HWND_BROADCAST, windows.GIO_DEEPLINKING, uintptr(len(uri)), 0)
+	windows.SendMessage(windows.HWND_BROADCAST, windows.GIO_OPEN_URL, uintptr(len(uri)), 0)
 }
 
 func (_ ViewEvent) ImplementsEvent() {}
