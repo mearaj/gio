@@ -5,7 +5,7 @@ package app
 import (
 	"errors"
 	"fmt"
-	"gioui.org/io/deeplink"
+	"gioui.org/io/transfer"
 	syscall "golang.org/x/sys/windows"
 	"image"
 	"net/url"
@@ -880,7 +880,7 @@ func (w *window) onOpenURI(uri string) {
 		return
 	}
 
-	w.w.Event(deeplink.Event{URL: u})
+	w.w.Event(transfer.URLEvent{URL: u})
 }
 
 func convertKeyCode(code uintptr) (string, bool) {

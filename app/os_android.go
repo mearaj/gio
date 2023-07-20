@@ -121,7 +121,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"gioui.org/io/deeplink"
+	"gioui.org/io/transfer"
 	"image"
 	"image/color"
 	"math"
@@ -668,7 +668,7 @@ func Java_org_gioui_GioView_onOpenURI(env *C.JNIEnv, class C.jclass, view C.jlon
 	if err != nil {
 		return
 	}
-	w.callbacks.Event(deeplink.Event{URL: u})
+	w.callbacks.Event(transfer.URLEvent{URL: u})
 }
 
 func (w *window) initAccessibilityNodeInfo(env *C.JNIEnv, sem router.SemanticNode, off image.Point, info C.jobject) error {

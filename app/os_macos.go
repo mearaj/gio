@@ -7,7 +7,7 @@ package app
 
 import (
 	"errors"
-	"gioui.org/io/deeplink"
+	"gioui.org/io/transfer"
 	"image"
 	"net/url"
 	"runtime"
@@ -844,7 +844,7 @@ func gio_onFinishLaunching() {
 	close(launched)
 }
 
-var startupDeeplink *url.URL
+var startupURI *url.URL
 
 //export gio_onOpenURI
 func gio_onOpenURI(uri C.CFTypeRef) {
@@ -853,11 +853,11 @@ func gio_onOpenURI(uri C.CFTypeRef) {
 		return
 	}
 	if len(viewMap) == 0 {
-		startupDeeplink = u
+		startupURI = u
 		return
 	}
 	for _, w := range viewMap {
-		w.w.Event(deeplink.Event{URL: u})
+		w.w.Event(transfer.URLEvent{URL: u})
 	}
 }
 
@@ -886,8 +886,8 @@ func newWindow(win *callbacks, options []Option) error {
 		C.makeKeyAndOrderFront(window)
 		layer := C.layerForView(w.view)
 		w.w.Event(ViewEvent{View: uintptr(w.view), Layer: uintptr(layer)})
-		if startupDeeplink != nil {
-			w.w.Event(deeplink.Event{URL: startupDeeplink})
+		if startupURI != nil {
+			w.w.Event(transfer.URLEvent{URL: startupURI})
 		}
 	})
 	return <-errch
