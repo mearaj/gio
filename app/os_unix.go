@@ -8,8 +8,8 @@ package app
 import (
 	"errors"
 	"fmt"
+	"gioui.org/io/pointer"
 	"gioui.org/io/transfer"
-	"github.com/adrg/xdg"
 	syscall "golang.org/x/sys/unix"
 	"io"
 	"log"
@@ -17,13 +17,10 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path"
 	"path/filepath"
 	"strings"
 	"unsafe"
-
-	"gioui.org/io/pointer"
 )
 
 // ViewEvent provides handles to the underlying window objects for the
@@ -60,7 +57,7 @@ func osMain() {
 type windowDriver func(*callbacks, []Option) error
 
 // Instead of creating files with build tags for each combination of wayland +/- x11
-// let each driver initialize these variables with their own entryVersion of createWindow.
+// let each driver initialize these variables with their own versionInEntryFile of createWindow.
 var wlDriver, x11Driver windowDriver
 
 func newWindow(window *callbacks, options []Option) error {
@@ -116,24 +113,25 @@ var xCursor = [...]string{
 
 /* Format of appName.desktop entry file
 [Desktop Entry]
-Version=Application's entryVersion default is 1.0.0
+Version=Application's versionInEntryFile default is 1.0.0
 Type=Application
 Name=Your App Name
-Exec=Path to executable file %U
-Icon=Path to icon
+Exec=Path to executable/binary file %U
+Icon=Path to iconPath
 MimeType=comma separated schemes (mimeType)
 StartupNotify=bool(currently always true)
 Terminal=bool(currently always false)
+SingleMainWindow=bool(currently always true)"
 */
 
 /* Default paths used
-~/.local/share (xdg.DataHome)
-~/.local/share/applications (xdg.DataHome/applications)
-~/.local/share/applications/entryFile.desktop (xdg.DataHome/applications/entryFile.desktop)
-~/.local/share/appDataDir (xdg.DataHome/appDataDir)
-~/.local/share/appDataDir/icons (xdg.DataHome/appDataDir/icons)(app icons dir path)
-~/.local/share/appDataDir/bin (xdg.DataHome/appDataDir/bin) (app binaries dir path)
-/tmp/socketFileName
+~/.local/share
+~/.local/share/applications
+~/.local/share/applications/entryFile.desktop
+~/.local/share/appDataDir
+~/.local/share/appDataDir/icons (app icons dir path)
+~/.local/share/appDataDir/bin (app binaries dir path)
+/tmp/socket
 */
 
 // mimeType is comma separated schemes,this is the
@@ -141,64 +139,77 @@ Terminal=bool(currently always false)
 // ex -ldflags="-X 'gioui.org/app.mimeType=x-scheme-handler/custom-uri'
 var mimeType string
 
+var socketConn net.Listener = nil
+
+// socketDirPath Default is os.TempDir()
+var socketDirPath string
+
 // socketFileName is the unique socket connection filename.
 // Using the same socketFileName ensures that only single instance of app is running
-// Default is executable file (filepath.Base(os.Args[0]))
+// Default is appBinaryName (suffix .sock is added if not present)
 var socketFileName string
 
-// desktopEntryDirPath
-// Default is ~/.local/share/applications.(xdg.DataHome/applications)
-var desktopEntryDirPath string
+// desktopEntryDir
+// Default is ~/.local/share/applications
+var desktopEntryDir string
 
-// entryName of the entry file
+// name of the entry file
 // Default is executable file with .desktop suffix
 var entryFileName string
 
-// dataDirPath
-// by default it's ~/.local/share/nameOfExecutableFile
-// by default icons and bin directory resides in this path
-var dataDirPath string
+// appDataDir
+// Default is ~/.local/share/appBinaryName
+var appDataDir string
 
 // binDirPath
-// ex -ldflags="-X 'gioui.org/app.binDirPath=binDirPath'
-// by default it's dataDirPath/bin
+// Default is appDataDir/bin
 var binDirPath string
 
+// appBinaryName
+// Default is executable filename (filepath.Base(os.Args[0]))
+var appBinaryName string
+
 // iconsDirPath
-// ex -ldflags="-X 'gioui.org/app.iconsDirPath=iconsDirPath'
-// by default it's dataDirPath/icons
+// Default is appDataDir/icons
 var iconsDirPath string
 
-// entryVersion for desktop entry file, defaults to 1.0.0
-var entryVersion string
+// versionInEntryFile for desktop entry file
+// Default is to 1.0.0
+var versionInEntryFile string
 
-// entryName for desktop entry file, defaults to entryName of executable
-var entryName string
+// nameInEntryFile for desktop entry file
+// Default is appBinaryName
+var nameInEntryFile string
 
-// icon
-// if provided, icon is copied to iconsDirPath and path is added
-// to desktop entry file.
-var icon string
-
-var socketConn net.Listener = nil
-
-var socketPath string
+// iconPath
+// if provided, icon from iconPath is copied to iconsDirPath and
+// new icon path is added to desktop entry file.
+var iconPath string
 
 func init() {
 	if mimeType == "" {
 		return
 	}
-	if socketFileName == "" {
-		socketFileName = filepath.Base(os.Args[0])
+	if appBinaryName == "" {
+		appBinaryName = filepath.Base(os.Args[0])
 	}
-	socketPath = path.Join(os.TempDir(), socketFileName)
-	c, err := net.Dial("unix", socketPath)
+	if socketFileName == "" {
+		socketFileName = appBinaryName
+	}
+	if socketDirPath == "" {
+		socketDirPath = path.Join(os.TempDir())
+	}
+	var socketFile = path.Join(socketDirPath, socketFileName)
+	if !strings.HasSuffix(socketFile, ".sock") {
+		socketFile += ".sock"
+	}
+	c, err := net.Dial("unix", socketFile)
 	if err != nil {
 		// syscall.ECONNREFUSED error most likely indicates socket file exists but
-		//  app instance is not running
+		//  app instance is not running, hence we delete the socketFile
 		if errors.Is(err, syscall.ECONNREFUSED) {
 			// delete socket file
-			_ = os.Remove(socketPath)
+			_ = os.Remove(socketFile)
 		}
 		// we exit with error if error is other than these errors
 		// (syscall.ENOENT indicates that socket file doesn't exist)
@@ -207,22 +218,21 @@ func init() {
 		}
 	} else {
 		// since err is nil, we are certain that another instance of our app is running
-		// if any arguments were passed to this app then we pass it to already running
+		// if any arguments were passed to this app, then we pass it to already running
 		// instance of our app
 		if len(os.Args) > 1 {
-			for _, arg := range os.Args[1:] {
-				_, _ = c.Write([]byte(arg))
-			}
+			_, _ = c.Write([]byte(strings.Join(os.Args[1:], "\n")))
 		}
 		_ = c.Close()
 		log.Fatal("another instance of app is already running")
 	}
-	socketConn, err = net.Listen("unix", socketPath)
+	socketConn, err = net.Listen("unix", socketFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 	err = createDesktopEntry()
 	if err != nil {
+		_ = socketConn.Close()
 		log.Fatal(err)
 	}
 }
@@ -232,24 +242,20 @@ func listenToSocketConn(window *callbacks) {
 	if socketConn == nil {
 		return
 	}
+	var socketFile = path.Join(socketDirPath, socketFileName)
+	if !strings.HasSuffix(socketFile, ".sock") {
+		socketFile += ".sock"
+	}
 	// Cleanup the sockfile.
-	clCh := make(chan os.Signal, 1)
-	signal.Notify(clCh, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-clCh
-		_ = socketConn.Close()
-		_ = os.Remove(socketPath)
-		os.Exit(0)
-	}()
 	defer func() {
 		_ = socketConn.Close()
-		_ = os.Remove(socketPath)
+		_ = os.Remove(socketFile)
 	}()
 	for {
 		// Accept an incoming connection.
 		conn, err := socketConn.Accept()
 		if err != nil {
-			return
+			continue
 		}
 
 		// Handle the connection in a separate goroutine.
@@ -259,11 +265,14 @@ func listenToSocketConn(window *callbacks) {
 			if err != nil {
 				return
 			}
-			urlPtr, err := url.Parse(string(bs))
-			if err != nil {
-				return
+			args := strings.Split(string(bs), "\n")
+			for _, arg := range args {
+				urlPtr, err := url.Parse(arg)
+				if err != nil {
+					return
+				}
+				window.Event(transfer.URLEvent{URL: urlPtr})
 			}
-			window.Event(transfer.URLEvent{URL: urlPtr})
 		}(conn)
 	}
 }
@@ -273,30 +282,35 @@ func createDesktopEntry() (err error) {
 	if mimeType == "" {
 		return nil
 	}
-	if desktopEntryDirPath == "" {
-		desktopEntryDirPath = filepath.Join(xdg.DataHome, "applications")
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
 	}
-	if dataDirPath == "" {
-		dataDirPath = filepath.Join(xdg.DataHome, filepath.Base(os.Args[0]))
+	dataHome := filepath.Join(homeDir, ".local", "share")
+	if desktopEntryDir == "" {
+		desktopEntryDir = filepath.Join(dataHome, "applications")
+	}
+	if appDataDir == "" {
+		appDataDir = filepath.Join(dataHome, appBinaryName)
 	}
 	if socketFileName == "" {
-		socketFileName = filepath.Base(os.Args[0])
+		socketFileName = appBinaryName
 	}
 	if binDirPath == "" {
-		binDirPath = filepath.Join(dataDirPath, "bin")
+		binDirPath = filepath.Join(appDataDir, "bin")
 	}
 	if iconsDirPath == "" {
-		iconsDirPath = filepath.Join(dataDirPath, "icons")
+		iconsDirPath = filepath.Join(appDataDir, "icons")
 	}
-	if entryVersion == "" {
-		entryVersion = "1.0.0"
+	if versionInEntryFile == "" {
+		versionInEntryFile = "1.0.0"
 	}
-	if entryName == "" {
-		entryName = filepath.Base(os.Args[0])
+	if nameInEntryFile == "" {
+		nameInEntryFile = appBinaryName
 	}
 	// Create applications directory if not exists.
-	if _, err = os.Stat(desktopEntryDirPath); errors.Is(err, os.ErrNotExist) {
-		err = os.MkdirAll(desktopEntryDirPath, os.ModePerm)
+	if _, err = os.Stat(desktopEntryDir); errors.Is(err, os.ErrNotExist) {
+		err = os.MkdirAll(desktopEntryDir, os.ModePerm)
 		if err != nil {
 			return
 		}
@@ -315,16 +329,16 @@ func createDesktopEntry() (err error) {
 			return
 		}
 	}
-	// copy icon from icon to icon path of entry file
-	if icon != "" {
+	// copy iconPath from iconPath to iconPath path of entry file
+	if iconPath != "" {
 		var src, dst *os.File
-		src, err = os.Open(icon)
+		src, err = os.Open(iconPath)
 		if err != nil {
 			return err
 		}
 		defer src.Close()
-		icon = filepath.Join(iconsDirPath, filepath.Base(icon))
-		dst, err = os.Create(icon)
+		iconPath = filepath.Join(iconsDirPath, filepath.Base(iconPath))
+		dst, err = os.Create(iconPath)
 		if err != nil {
 			return err
 		}
@@ -334,8 +348,8 @@ func createDesktopEntry() (err error) {
 			return err
 		}
 	}
-	binFilePath := filepath.Join(binDirPath, filepath.Base(os.Args[0]))
-	//
+	binFilePath := filepath.Join(binDirPath, appBinaryName)
+	// copy only if the src and dest binaries path are different
 	if binFilePath != os.Args[0] {
 		binFileBs, err := os.ReadFile(os.Args[0])
 		if err != nil {
@@ -346,7 +360,6 @@ func createDesktopEntry() (err error) {
 			return err
 		}
 	}
-
 	entryFile := fmt.Sprintf(
 		"[Desktop Entry]\n"+
 			"Version=%s\n"+
@@ -356,26 +369,26 @@ func createDesktopEntry() (err error) {
 			"Icon=%s\n"+
 			"MimeType=%s\n"+
 			"StartupNotify=true\n"+
-			"Terminal=false\n",
-		entryVersion,
-		entryName,
+			"Terminal=false\n"+
+			"SingleMainWindow=true",
+		versionInEntryFile,
+		nameInEntryFile,
 		binFilePath,
-		icon,
+		iconPath,
 		mimeType,
 	)
 	if entryFileName == "" {
-		entryFileName = filepath.Base(os.Args[0])
+		entryFileName = appBinaryName
 	}
-	if !strings.HasSuffix(entryFile, ".desktop") {
+	if !strings.HasSuffix(entryFileName, ".desktop") {
 		entryFileName += ".desktop"
 	}
-
-	desktopEntryFilePath := filepath.Join(desktopEntryDirPath, entryFileName)
+	desktopEntryFilePath := filepath.Join(desktopEntryDir, entryFileName)
 	err = os.WriteFile(desktopEntryFilePath, []byte(entryFile), os.ModePerm)
 	if err != nil {
 		return err
 	}
-	err = exec.Command("update-desktop-database", desktopEntryDirPath).Start()
+	err = exec.Command("update-desktop-database", desktopEntryDir).Start()
 	if err != nil {
 		return
 	}
