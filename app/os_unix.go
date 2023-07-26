@@ -197,7 +197,7 @@ func init() {
 		socketFileName = appBinaryName
 	}
 	if socketDirPath == "" {
-		socketDirPath = path.Join(os.TempDir())
+		socketDirPath = os.TempDir()
 	}
 	var socketFile = path.Join(socketDirPath, socketFileName)
 	if !strings.HasSuffix(socketFile, ".sock") {
@@ -246,7 +246,7 @@ func listenToSocketConn(window *callbacks) {
 	if !strings.HasSuffix(socketFile, ".sock") {
 		socketFile += ".sock"
 	}
-	// Cleanup the sockfile.
+	// Cleanup the socketFile.
 	defer func() {
 		_ = socketConn.Close()
 		_ = os.Remove(socketFile)
@@ -329,7 +329,7 @@ func createDesktopEntry() (err error) {
 			return
 		}
 	}
-	// copy iconPath from iconPath to iconPath path of entry file
+	// copy iconPath from iconPath to icon entry in entry file
 	if iconPath != "" {
 		var src, dst *os.File
 		src, err = os.Open(iconPath)
